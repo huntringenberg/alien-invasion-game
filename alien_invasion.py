@@ -1,7 +1,9 @@
 import sys
 import pygame
+import json
 from settings import Settings
 from game_stats import GameStats
+from scoreboard import Scoreboard
 from button import Button
 from ship import Ship
 from bullet import Bullet
@@ -24,8 +26,16 @@ class AlienInvasion:
         self.bg_color = self.settings.bg_color
         pygame.display.set_caption('Alien Invasion')
 
+        # Check for json file fore high score if not generate it
+        try:
+            with open("high_score.json") as f:
+                self.old_high_score = json.load(f)
+        except FileNotFoundError:
+            self.old_high_score = 0
+
         # Create an instance of objects used by the game
         self.stats = GameStats(self)
+        self.sb = Scoreboard(self)
         self.ship = Ship(self)
         self.bullets = pygame.sprite.Group()
         self.aliens = pygame.sprite.Group()
@@ -50,7 +60,7 @@ class AlienInvasion:
         """Respond to keypresses and mouse events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                sys.exit()
+                self._save_high_score_exit()
             elif event.type == pygame.KEYDOWN:
                 self._check_keydown_events(event)
             elif event.type == pygame.KEYUP:
@@ -63,12 +73,14 @@ class AlienInvasion:
         """Start a new game when the player clicks play."""
         button_clicked = self.play_button.rect.collidepoint(mouse_pos)
         if button_clicked:
+            # Reset the game settings.
+            self.settings.intialize_dynamic_settings()
             self._start_game()
 
     def _check_keydown_events(self, event):
         """Responds to keydown presses."""
         if event.key == pygame.K_q or event.key == pygame.K_ESCAPE:
-            sys.exit()
+            self._save_high_score_exit()
         elif event.key == pygame.K_RIGHT:
             self.ship.moving_right = True
         elif event.key == pygame.K_LEFT:
@@ -78,7 +90,6 @@ class AlienInvasion:
                 self._start_game()
             else:
                 self._fire_bullet()
-
 
     def _check_keyup_events(self, event):
         if event.key == pygame.K_RIGHT:
@@ -93,6 +104,12 @@ class AlienInvasion:
             # Reset game stats
             self.stats.reset_stats()
             self.stats.game_active = True
+            self.settings.intialize_dynamic_settings()
+
+            # Reset score and level images
+            self.sb.prep_score()
+            self.sb.prep_level()
+            self.sb.prep_ships()
 
             # Delete any remaining aliens and bullets
             self.aliens.empty()
@@ -127,10 +144,22 @@ class AlienInvasion:
         """Respond to bullet and alien collisions"""
         collisions = pygame.sprite.groupcollide(self.bullets, self.aliens,
                                                 True, True)
-        # Create new fleet
+
+        if collisions:
+            for alien in collisions.values():
+                self.stats.score += self.settings.alien_points * len(alien)
+                self.sb.prep_score()
+                self.sb.check_high_score()
+
+        # Create new fleet and increase game speed
         if not self.aliens:
             self.bullets.empty()
             self._create_fleet()
+            self.settings.increase_speed()
+
+            # Increase level
+            self.stats.level += 1
+            self.sb.prep_level()
 
     def _create_fleet(self):
         """Create the fleet of aliens."""
@@ -198,9 +227,10 @@ class AlienInvasion:
     def _ship_hit(self):
         """Respond to the ship being hit by an alien."""
         # Check there are still ships left or the game is over
-        if self.stats.ship_left > 0:
+        if self.stats.ships_left > 0:
             # Decrement ships left
-            self.stats.ship_left -= 1
+            self.stats.ships_left -= 1
+            self.sb.prep_ships()
 
             # Get rid of any remaining aliens and bullets
             self.aliens.empty()
@@ -217,6 +247,12 @@ class AlienInvasion:
             self.stats.game_active = False
             pygame.mouse.set_visible(True)
 
+    def _save_high_score_exit(self):
+        if self.stats.high_score > self.old_high_score:
+            with open('high_score.json', 'w') as f:
+                json.dump(self.stats.high_score, f)
+        sys.exit()
+
     def _update_screen(self):
         """Update images on the screen, and flip to the new screen."""
         self.screen.fill(self.settings.bg_color)
@@ -224,6 +260,9 @@ class AlienInvasion:
         for bullet in self.bullets.sprites():
             bullet.draw_bullet()
         self.aliens.draw(self.screen)
+
+        # Draw score information
+        self.sb.show_score()
 
         # Draw the "Play" button if the game is inactive
         if not self.stats.game_active:
